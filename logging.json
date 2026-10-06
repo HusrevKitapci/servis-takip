@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "json": {
+      "()": "app.observability.JsonLogFormatter"
+    }
+  },
+  "handlers": {
+    "console": {
+      "class": "logging.StreamHandler",
+      "stream": "ext://sys.stderr",
+      "formatter": "json"
+    }
+  },
+  "loggers": {
+    "servis_takip": {
+      "handlers": ["console"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "uvicorn": {
+      "handlers": ["console"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "uvicorn.error": {
+      "handlers": [],
+      "level": "INFO",
+      "propagate": true
+    },
+    "uvicorn.access": {
+      "handlers": [],
+      "level": "INFO",
+      "propagate": false
+    }
+  }
+}

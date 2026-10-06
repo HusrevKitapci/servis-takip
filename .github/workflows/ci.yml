@@ -1,0 +1,158 @@
+# ============================================================================
+# 1. İŞ AKIŞININ ADI VE ÇALIŞMA KOŞULLARI
+# ============================================================================
+
+name: Servis Takip CI
+
+# push: GitHub'a commit gönderildiğinde çalışır.
+# pull_request: Birleştirme isteği açıldığında veya güncellendiğinde çalışır.
+# workflow_dispatch: Actions ekranından elle başlatılmasını sağlar.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+
+# ============================================================================
+# 2. YETKİLER VE AYNI ANDA ÇALIŞAN KONTROLLER
+# ============================================================================
+
+# Bu iş akışı kaynak kodu okuyabilir.
+# Depoya kod yazma veya paket yayımlama yetkisi gerekmez.
+permissions:
+  contents: read
+
+# Aynı dal veya pull request için yeni bir çalışma başladığında,
+# önceki ve henüz tamamlanmamış çalışmayı iptal et.
+concurrency:
+  group: servis-takip-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+
+# ============================================================================
+# 3. ÇALIŞTIRILACAK İŞLER
+# ============================================================================
+
+jobs:
+
+  # --------------------------------------------------------------------------
+  # 3.1. VERİTABANI VE UYGULAMA TESTLERİ
+  # --------------------------------------------------------------------------
+
+  tests:
+    name: PostgreSQL ile uygulama testleri
+
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    # Bu ayarlar yalnızca GitHub'ın geçici test ortamında kullanılır.
+    # Bilgisayarımızdaki .env dosyası GitHub'a gönderilmez.
+    env:
+      POSTGRES_HOST: "127.0.0.1"
+      POSTGRES_PORT: "5433"
+      POSTGRES_DB: "servis_takip_test"
+      POSTGRES_USER: "servis_user"
+      POSTGRES_PASSWORD: "ci-only-postgres-password"
+
+      # Bu anahtar bilerek yalnızca test ortamına aittir.
+      # Gerçek uygulamada kullanılacak gizli anahtar değildir.
+      JWT_SECRET_KEY: "ci-only-signing-key-not-for-production-0123456789abcdef0123456789abcdef"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+
+    services:
+      postgres:
+        image: postgres:17
+
+        env:
+          POSTGRES_DB: servis_takip_test
+          POSTGRES_USER: servis_user
+          POSTGRES_PASSWORD: ci-only-postgres-password
+
+        # Testler runner üzerinde çalıştığı için yayımlanan port kullanılır.
+        ports:
+          - 5433:5432
+
+        # PostgreSQL bağlantı kabul etmeye hazır olmadan testlere geçme.
+        options: >-
+          --health-cmd "pg_isready -U servis_user -d servis_takip_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 10s
+
+    steps:
+      # Depodaki kaynak kodu geçici çalışma makinesine indir.
+      - name: Kaynak kodu al
+        uses: actions/checkout@v6
+
+      # Projemizle aynı Python ana ve alt sürümünü kur.
+      - name: Python 3.12 kur
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # psycopg'nin saf Python uygulaması için sistem kütüphanesi.
+      - name: PostgreSQL istemci kütüphanesini kur
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpq5
+
+      - name: Python bağımlılıklarını kur
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip check
+
+      # Test ortamında yanlış bir veritabanı adının kullanılmasını önle.
+      - name: Test veritabanı ayarını doğrula
+        run: |
+          python - <<'PY'
+          from app.config import get_settings
+
+          settings = get_settings()
+
+          if settings.postgres_db != "servis_takip_test":
+              raise RuntimeError("CI yalnızca test veritabanıyla çalışmalıdır.")
+
+          print("CI test veritabanı ayarı doğrulandı.")
+          PY
+
+      # Boş veritabanını migration dosyalarıyla sıfırdan kur.
+      # Böylece yalnızca mevcut yerel veritabanına güvenmemiş oluruz.
+      - name: Migration dosyalarını uygula
+        run: python -m alembic upgrade head
+
+      - name: Veritabanı bağlantısını kontrol et
+        run: python -m app.database
+
+      # Normal uygulamayı Uvicorn ile başlatmak gerekmez.
+      # API testleri kendi TestClient nesnelerini kullanır.
+      - name: Bütün testleri çalıştır
+        run: python -m pytest tests -q --tb=short
+
+
+  # --------------------------------------------------------------------------
+  # 3.2. DOCKER İMAJI OLUŞTURMA KONTROLÜ
+  # --------------------------------------------------------------------------
+
+  docker:
+    name: Docker imajını oluştur
+
+    # Test işi başarısız olursa bu işi çalıştırma.
+    needs: tests
+
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Kaynak kodu al
+        uses: actions/checkout@v6
+
+      # Yalnızca imajı oluşturur; bir sunucuya veya registry'ye göndermez.
+      # Bu işin .env dosyasına ya da gerçek parolalara ihtiyacı yoktur.
+      - name: Docker build kontrolü
+        run: docker build --tag servis-takip-api:ci .

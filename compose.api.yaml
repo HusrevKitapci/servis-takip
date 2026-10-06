@@ -1,0 +1,90 @@
+# ============================================================================
+# 1. API SERVİSİ
+# ============================================================================
+
+# Bu dosya tek başına kullanılmaz.
+# compose.yaml ile birlikte çalıştırılarak mevcut db servisine API ekler.
+
+services:
+  api:
+    # Dockerfile ve kaynak dosyalar proje kökünde bulunur.
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    # Oluşturulan imaja yerel bir isim ver.
+    image: servis-takip-api:local
+
+    # Konteyner içindeki süreçlerin kapanmasına yardımcı olur.
+    init: true
+
+    # Docker yeniden başladığında, kullanıcı tarafından durdurulmamış
+    # API konteynerini tekrar başlat.
+    restart: unless-stopped
+
+    # ------------------------------------------------------------------------
+    # 1.1. VERİTABANI HAZIRLIĞI
+    # ------------------------------------------------------------------------
+
+    # Yalnızca konteynerin başlamasını değil,
+    # PostgreSQL sağlık kontrolünün başarılı olmasını bekle.
+    depends_on:
+      db:
+        condition: service_healthy
+
+    # ------------------------------------------------------------------------
+    # 1.2. UYGULAMA AYARLARI
+    # ------------------------------------------------------------------------
+
+    environment:
+      # Aynı Compose ağı içinde veritabanına servis adıyla ulaşılır.
+      POSTGRES_HOST: db
+
+      # Bu, PostgreSQL konteynerinin iç portudur.
+      # Windows üzerinden kullanılan 5433 portuyla karıştırma.
+      POSTGRES_PORT: "5432"
+
+      # Mevcut compose.yaml ile aynı kaynaklardan okunan bağlantı bilgileri.
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB ayarini doldurun}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER ayarini doldurun}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD ayarini doldurun}
+
+      # config.py dosyasındaki kimlik doğrulama ayarları.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY ayarini doldurun}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+
+    # ------------------------------------------------------------------------
+    # 1.3. BİLGİSAYARDAN ERİŞİM
+    # ------------------------------------------------------------------------
+
+    # API yalnızca bu bilgisayarın localhost adresinden erişilebilir.
+    ports:
+      - "127.0.0.1:8000:8000"
+
+    # ------------------------------------------------------------------------
+    # 1.4. API SAĞLIK KONTROLÜ
+    # ------------------------------------------------------------------------
+
+    # /ready uç noktası veritabanı bağlantısını da kontrol eder.
+    # urllib Python ile birlikte geldiği için ayrıca curl kurmak gerekmez.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).close()"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    # ------------------------------------------------------------------------
+    # 1.5. DOCKER LOG DOSYALARININ BOYUTU
+    # ------------------------------------------------------------------------
+
+    # Sürekli çalışan uygulamanın logları diskte sınırsız büyümesin.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

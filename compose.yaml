@@ -1,0 +1,42 @@
+# ============================================================================
+# 1. ÇALIŞTIRILACAK SERVİSLER
+# ============================================================================
+
+services:
+  db:
+    # PostgreSQL'in 17 ana sürümünü kullanıyoruz.
+    image: postgres:17
+
+    # Bu değerler proje kökündeki .env dosyasından okunur.
+    # Eksik veya boş bir ayar varsa Compose açıklayıcı hata verir.
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB ayarini doldurun}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER ayarini doldurun}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD ayarini doldurun}
+
+    # Yalnızca bu bilgisayardan erişilebilen bağlantı noktası.
+    # Windows'taki 5433 portu, konteynerdeki 5432 portuna yönlendirilir.
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:?POSTGRES_PORT ayarini doldurun}:5432"
+
+    # Verileri konteynerden ayrı, kalıcı bir Docker volume'ünde sakla.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    # PostgreSQL'in bağlantı kabul etmeye hazır olup olmadığını kontrol et.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+
+# ============================================================================
+# 2. KALICI VERİ ALANLARI
+# ============================================================================
+
+volumes:
+  postgres_data:
